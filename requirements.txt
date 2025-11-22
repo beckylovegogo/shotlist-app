@@ -1,5 +1,2 @@
 streamlit
 requests
-google-generativeai
-google-auth-oauthlib
-google-auth-httplib2
