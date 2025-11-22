@@ -2,7 +2,8 @@ import streamlit as st
 import requests
 import json
 import os
-import urllib.parse # 👈 新增這個套件來修復圖片網址
+import urllib.parse
+import random
 
 # --- 頁面設定 ---
 st.set_page_config(page_title="AI 導演助手", layout="wide", page_icon="🎬")
@@ -14,11 +15,11 @@ def check_password():
 
     if not st.session_state["authenticated"]:
         st.markdown("<br><br><h1 style='text-align: center;'>🔒 AI 導演助手 (VIP版)</h1>", unsafe_allow_html=True)
-        
         col1, col2, col3 = st.columns([1, 1, 1])
         with col2:
             password = st.text_input("輸入啟用碼", type="password", label_visibility="collapsed")
             if st.button("🔓 解鎖進入", type="primary", use_container_width=True):
+                # 檢查 Secrets 裡的 ACCESS_CODE
                 if password == st.secrets["ACCESS_CODE"]:
                     st.session_state["authenticated"] = True
                     st.rerun()
@@ -34,10 +35,11 @@ check_password()
 
 st.title("🎬 AI 導演：視覺分鏡助手")
 
+# 讀取 API Key
 try:
     api_key = st.secrets["GOOGLE_API_KEY"]
 except:
-    st.error("⚠️ 請設定 GOOGLE_API_KEY")
+    st.error("⚠️ 請在 Secrets 設定 GOOGLE_API_KEY")
     st.stop()
 
 with st.sidebar:
@@ -49,19 +51,22 @@ with st.sidebar:
     btn = st.button("🚀 生成分鏡 + 圖片", type="primary")
 
 def generate_content(key, topic, style, duration, desc):
+    # 使用 Gemini 2.0 Flash (速度快，效果好)
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={key}"
     headers = {'Content-Type': 'application/json'}
     
-    # 🔴 關鍵修改：強制 visual 欄位只輸出英文，避免亂碼
+    # 🔴 修正 Prompt：要求詳細欄位，並專門生一個簡短的生圖指令
     prompt = f"""
     你是專業導演。請製作 Shot List：
     主題：{topic}, 風格：{style}, 長度：{duration}分, 描述：{desc}
     
-    請回傳純 JSON 陣列。每個物件格式：
+    請回傳純 JSON 陣列。每個物件包含：
     {{
         "id": "1",
-        "visual": "Detailed description of the scene in ENGLISH ONLY (for AI image generation). Include lighting, style, composition.", 
-        "desc": "繁體中文拍攝指導",
+        "size": "景別 (如：特寫/中景/大遠景)", 
+        "time": "預估秒數 (如：5秒)",
+        "visual_prompt": "英文生圖關鍵字 (用於AI繪圖，請精簡，重點描述光影和構圖，例如: Cinematic close-up of coffee cup, morning light, 4k)",
+        "desc": "繁體中文拍攝指導 (包含運鏡、動作)",
         "audio": "聲音備註"
     }}
     """
@@ -78,30 +83,37 @@ def generate_content(key, topic, style, duration, desc):
         return None
 
 if btn:
-    with st.spinner("🤖 AI 正在繪製分鏡圖 (手機網路可能需稍候)..."):
+    with st.spinner("⚡ Gemini 2.0 正在極速構思畫面..."):
         shots = generate_content(api_key, v_topic, v_type, v_dur, v_desc)
         
         if shots:
             st.divider()
             for shot in shots:
+                # 建立兩欄佈局
                 c1, c2 = st.columns([1, 1.5])
                 
+                # 左欄：AI 圖片
                 with c1:
-                    # 🔴 關鍵修復：使用標準 URL 編碼
-                    try:
-                        prompt_safe = urllib.parse.quote(shot['visual'])
-                        # 加入 width/height 參數讓手機載入更快
-                        img_url = f"https://image.pollinations.ai/prompt/{prompt_safe}?width=800&height=600&nologo=true&seed={shot['id']}"
-                        st.image(img_url, use_container_width=True)
-                    except:
-                        st.warning("⚠️ 圖片載入失敗")
+                    # 使用亂數種子確保每次圖都不一樣
+                    seed = random.randint(0, 99999)
+                    # 網址編碼，並限制圖片大小加速手機載入
+                    safe_prompt = urllib.parse.quote(shot['visual_prompt'])
+                    img_url = f"https://image.pollinations.ai/prompt/{safe_prompt}?width=800&height=450&nologo=true&seed={seed}&model=flux"
+                    
+                    st.image(img_url, use_container_width=True)
                 
+                # 右欄：詳細資訊 + 相機
                 with c2:
-                    st.subheader(f"鏡頭 {shot['id']}")
-                    st.info(f"🎥 **{shot['desc']}**")
-                    st.caption(f"🔊 {shot['audio']}")
+                    # 標題區：編號 + 景別 + 時間
+                    st.markdown(f"### 🎬 鏡頭 {shot['id']} <span style='font-size:0.8em; color:gray'>({shot['size']} · {shot['time']})</span>", unsafe_allow_html=True)
+                    
+                    # 內容區
+                    st.info(f"🎥 **指導：** {shot['desc']}")
+                    st.caption(f"🔊 **聲音：** {shot['audio']}")
+                    
+                    # 相機按鈕
                     st.file_uploader(f"📹 開啟相機 ({shot['id']})", type=['mp4', 'mov'], key=shot['id'])
                 
                 st.divider()
         else:
-            st.error("生成失敗，請再試一次。")
+            st.error("生成失敗，請確認 API Key 或網絡狀態。")
